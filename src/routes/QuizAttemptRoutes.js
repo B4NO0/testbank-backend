@@ -171,14 +171,26 @@ function evaluateQuestion(question, studentAnswer) {
       break;
 
     case 'truefalse':
-      // True/False: convert student answer (0/1) to boolean, and correct answer to boolean
-      const studentBool = studentAns === 1;
-      let correctBool;
+      // True/False: convert student answer to boolean (handle both boolean and numeric formats)
+      let studentBool;
+      if (typeof studentAns === 'boolean') {
+        studentBool = studentAns;
+      } else if (typeof studentAns === 'number') {
+        studentBool = studentAns === 1; // 1 = true, 0 = false
+      } else if (typeof studentAns === 'string') {
+        studentBool = studentAns.toLowerCase() === 'true';
+      } else {
+        studentBool = false;
+      }
       
+      // Convert correct answer to boolean
+      let correctBool;
       if (typeof correctAns === 'string') {
         correctBool = correctAns.toLowerCase() === 'true';
       } else if (typeof correctAns === 'boolean') {
         correctBool = correctAns;
+      } else if (typeof correctAns === 'number') {
+        correctBool = correctAns === 1; // 1 = true, 0 = false
       } else {
         correctBool = false;
       }

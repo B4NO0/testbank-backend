@@ -343,14 +343,27 @@ function evaluateQuestion(question, studentAnswer) {
       console.log(`   Student Answer: ${studentAns} (type: ${typeof studentAns})`);
       console.log(`   Correct Answer: ${correctAns} (type: ${typeof correctAns})`);
       
-      // Convert student answer (0/1) to boolean, and correct answer to boolean
-      const studentBool = studentAns === 1;
-      let correctBool;
+      // Convert student answer to boolean (handle both boolean and numeric formats)
+      let studentBool;
+      if (typeof studentAns === 'boolean') {
+        studentBool = studentAns;
+      } else if (typeof studentAns === 'number') {
+        studentBool = studentAns === 1; // 1 = true, 0 = false
+      } else if (typeof studentAns === 'string') {
+        studentBool = studentAns.toLowerCase() === 'true';
+      } else {
+        console.log(`   ❌ Unexpected student answer format: ${typeof studentAns}`);
+        studentBool = false;
+      }
       
+      // Convert correct answer to boolean
+      let correctBool;
       if (typeof correctAns === 'string') {
         correctBool = correctAns.toLowerCase() === 'true';
       } else if (typeof correctAns === 'boolean') {
         correctBool = correctAns;
+      } else if (typeof correctAns === 'number') {
+        correctBool = correctAns === 1; // 1 = true, 0 = false
       } else {
         console.log(`   ❌ Unexpected correctAnswer format: ${typeof correctAns}`);
         correctBool = false;

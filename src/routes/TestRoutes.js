@@ -150,6 +150,19 @@ router.post("/:id/submit", async (req, res) => {
       ? new mongoose.Types.ObjectId(studentId) 
       : studentId;
     
+    // Check if student already attempted this test
+    const existingAttempt = await StudentTestAttempt.findOne({
+      student: studentObjectId,
+      test: req.params.id
+    });
+
+    if (existingAttempt) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Test already attempted" 
+      });
+    }
+    
     const test = await Test.findById(req.params.id).lean();
     if (!test) return res.status(404).json({ message: "Test not found" });
 

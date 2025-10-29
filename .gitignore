@@ -1,0 +1,6 @@
+echo "node_modules/
+.env
+serviceAccountKey.json
+.DS_Store
+*.log
+" > .gitignore

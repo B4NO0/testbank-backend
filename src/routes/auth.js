@@ -1,8 +1,6 @@
 import express from "express";
 import bcrypt from "bcryptjs";
 import Student from "../models/Student.js";
-import PendingRegistration from "../models/PendingRegistration.js";
-import { sendOtpEmail } from "../config/mailer.js";
 
 const router = express.Router();
 
@@ -20,9 +18,11 @@ router.post("/register", async (req, res) => {
       section,
       yearLevel,
       campus,
+      securityQuestion,
+      securityAnswer,
     } = req.body;
 
-    if (!firstName|| !lastName || !email || !password|| !studentID|| !course|| !section|| !yearLevel|| !campus) {
+    if (!firstName|| !lastName || !email || !password|| !studentID|| !course|| !section|| !yearLevel|| !campus || !securityQuestion || !securityAnswer) {
       return res.status(400).json({ message: "Missing required fields" });
     }
 
@@ -54,8 +54,9 @@ router.post("/register", async (req, res) => {
       return res.status(400).json({ message: "Email already exists" });
     }
 
-    // Hash password
+    // Hash password and security answer
     const hashedPassword = await bcrypt.hash(password, 12);
+    const hashedSecurityAnswer = await bcrypt.hash(securityAnswer.toLowerCase().trim(), 12);
 
     // Create student in MongoDB first (source of truth)
     const newStudent = await Student.create({
@@ -69,6 +70,8 @@ router.post("/register", async (req, res) => {
       section,
       yearLevel,
       campus,
+      securityQuestion,
+      securityAnswer: hashedSecurityAnswer,
     });
 
     // Note: Student will be synced to Firestore automatically via the MongoDB change stream
@@ -100,186 +103,6 @@ router.post("/register", async (req, res) => {
   }
 });
 
-// POST /api/register-init
-router.post("/register-init", async (req, res) => {
-  try {
-    const {
-      lastName,
-      firstName,
-      middleName,
-      studentID,
-      email,
-      password,
-      course,
-      section,
-      yearLevel,
-      campus,
-    } = req.body;
-
-    if (!firstName || !lastName || !email || !password || !studentID || !course || !section || !yearLevel || !campus) {
-      return res.status(400).json({ message: "Missing required fields" });
-    }
-
-    if (!email.includes("@phinmaed.com")) {
-      return res.status(400).json({ message: "Email must be a valid PHINMA Education email (@phinmaed.com)" });
-    }
-
-    if (!["1", "2", "3", "4"].includes(yearLevel)) {
-      return res.status(400).json({ message: "Year level must be 1, 2, 3, or 4" });
-    }
-
-    const validCampuses = ["Main", "South", "San Jose"];
-    if (!validCampuses.includes(campus)) {
-      return res.status(400).json({ message: "Campus must be Main, South, or San Jose" });
-    }
-
-    // Ensure uniqueness against confirmed users
-    const existingStudent = await Student.findOne({ $or: [{ email }, { studentID }] });
-    if (existingStudent) {
-      return res.status(400).json({ message: "Student ID or email already exists" });
-    }
-
-    // Also ensure there isn't an active pending registration for same email/studentID
-    await PendingRegistration.deleteMany({ $or: [{ email }, { studentID }], otpExpiresAt: { $lt: new Date() } }); // cleanup expired for same identifiers
-    const activePending = await PendingRegistration.findOne({ $or: [{ email }, { studentID }], otpExpiresAt: { $gt: new Date() } });
-    if (activePending) {
-      return res.status(429).json({ message: "An OTP was already sent recently. Please check your email or wait before trying again." });
-    }
-
-    // Hash password now; OTP will be compared separately
-    const hashedPassword = await bcrypt.hash(password, 12);
-
-    // Generate 6-digit OTP
-    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
-    const otpHash = await bcrypt.hash(otpCode, 12);
-    const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
-
-    const pending = await PendingRegistration.create({
-      lastName,
-      firstName,
-      middleName: middleName || "",
-      studentID,
-      email,
-      password: hashedPassword,
-      course,
-      section,
-      yearLevel,
-      campus,
-      otpHash,
-      otpExpiresAt,
-      resendCount: 0,
-      lastSentAt: new Date(),
-    });
-
-    try {
-      await sendOtpEmail(email, otpCode);
-    } catch (mailErr) {
-      // If email fails, remove pending doc to avoid blocking
-      await PendingRegistration.findByIdAndDelete(pending._id).catch(() => {});
-      console.error("Failed to send OTP email:", mailErr);
-      return res.status(500).json({ message: "Failed to send OTP email. Please try again later." });
-    }
-
-    return res.status(200).json({ message: "OTP sent to your email", pendingId: pending._id });
-  } catch (error) {
-    console.error("register-init error:", error);
-    return res.status(500).json({ message: "Internal server error", error: error.message });
-  }
-});
-
-// POST /api/register-verify
-router.post("/register-verify", async (req, res) => {
-  try {
-    const { pendingId, otp } = req.body;
-    if (!pendingId || !otp) {
-      return res.status(400).json({ message: "Missing pendingId or otp" });
-    }
-
-    const pending = await PendingRegistration.findById(pendingId);
-    if (!pending) {
-      return res.status(404).json({ message: "Pending registration not found or expired" });
-    }
-
-    if (pending.otpExpiresAt < new Date()) {
-      await PendingRegistration.findByIdAndDelete(pendingId).catch(() => {});
-      return res.status(410).json({ message: "OTP expired. Please start over." });
-    }
-
-    const otpMatches = await bcrypt.compare(otp, pending.otpHash);
-    if (!otpMatches) {
-      return res.status(400).json({ message: "Invalid OTP" });
-    }
-
-    // Ensure duplicates not created in the meantime
-    const existingStudent = await Student.findOne({ $or: [{ email: pending.email }, { studentID: pending.studentID }] });
-    if (existingStudent) {
-      await PendingRegistration.findByIdAndDelete(pendingId).catch(() => {});
-      return res.status(409).json({ message: "An account with this email or student ID already exists" });
-    }
-
-    const newStudent = await Student.create({
-      lastName: pending.lastName,
-      firstName: pending.firstName,
-      middleName: pending.middleName || "",
-      studentID: pending.studentID,
-      email: pending.email,
-      password: pending.password,
-      course: pending.course,
-      section: pending.section,
-      yearLevel: pending.yearLevel,
-      campus: pending.campus,
-    });
-
-    await PendingRegistration.findByIdAndDelete(pendingId).catch(() => {});
-
-    return res.status(200).json({ message: "Registration verified successfully", user: { _id: newStudent._id, studentID: newStudent.studentID, email: newStudent.email } });
-  } catch (error) {
-    console.error("register-verify error:", error);
-    return res.status(500).json({ message: "Internal server error", error: error.message });
-  }
-});
-
-// POST /api/register-resend-otp
-router.post("/register-resend-otp", async (req, res) => {
-  try {
-    const { pendingId } = req.body;
-    if (!pendingId) {
-      return res.status(400).json({ message: "Missing pendingId" });
-    }
-
-    const pending = await PendingRegistration.findById(pendingId);
-    if (!pending) {
-      return res.status(404).json({ message: "Pending registration not found or expired" });
-    }
-
-    if (pending.otpExpiresAt < new Date()) {
-      await PendingRegistration.findByIdAndDelete(pendingId).catch(() => {});
-      return res.status(410).json({ message: "OTP expired. Please start over." });
-    }
-
-    // Simple rate limit: at least 60 seconds between sends, max 3 resends
-    const now = Date.now();
-    if (pending.lastSentAt && now - new Date(pending.lastSentAt).getTime() < 60 * 1000) {
-      return res.status(429).json({ message: "Please wait a minute before requesting a new code" });
-    }
-    if (pending.resendCount >= 3) {
-      return res.status(429).json({ message: "Maximum resend attempts reached" });
-    }
-
-    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
-    pending.otpHash = await bcrypt.hash(otpCode, 12);
-    pending.otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
-    pending.resendCount += 1;
-    pending.lastSentAt = new Date();
-    await pending.save();
-
-    await sendOtpEmail(pending.email, otpCode);
-    return res.status(200).json({ message: "A new OTP has been sent" });
-  } catch (error) {
-    console.error("register-resend-otp error:", error);
-    return res.status(500).json({ message: "Internal server error", error: error.message });
-  }
-});
 
 // POST /api/login
 router.post("/login", async (req, res) => {
@@ -391,6 +214,84 @@ router.put("/change-password", async (req, res) => {
     res.json({ message: "Password changed successfully" });
   } catch (err) {
     console.error("❌ Error changing password:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// POST /api/forgot-password - Verify security question
+router.post("/forgot-password", async (req, res) => {
+  try {
+    const { studentID, email, securityQuestion, securityAnswer } = req.body;
+
+    if (!studentID || !email || !securityQuestion || !securityAnswer) {
+      return res.status(400).json({ message: "All fields are required" });
+    }
+
+    const student = await Student.findOne({ studentID, email });
+    if (!student) {
+      return res.status(404).json({ message: "No account found with this Student ID and email" });
+    }
+
+    // Verify security question matches
+    if (student.securityQuestion !== securityQuestion) {
+      return res.status(400).json({ message: "Security question does not match" });
+    }
+
+    // Verify security answer
+    const answerMatches = await bcrypt.compare(securityAnswer.toLowerCase().trim(), student.securityAnswer);
+    if (!answerMatches) {
+      return res.status(401).json({ message: "Incorrect security answer" });
+    }
+
+    res.status(200).json({ 
+      message: "Security verification successful",
+      verified: true 
+    });
+  } catch (err) {
+    console.error("Error verifying security question:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// POST /api/reset-password - Reset password after verification
+router.post("/reset-password", async (req, res) => {
+  try {
+    const { studentID, email, securityQuestion, securityAnswer, newPassword } = req.body;
+
+    if (!studentID || !email || !securityQuestion || !securityAnswer || !newPassword) {
+      return res.status(400).json({ message: "All fields are required" });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ message: "Password must be at least 6 characters" });
+    }
+
+    const student = await Student.findOne({ studentID, email });
+    if (!student) {
+      return res.status(404).json({ message: "No account found with this Student ID and email" });
+    }
+
+    // Verify security question matches
+    if (student.securityQuestion !== securityQuestion) {
+      return res.status(400).json({ message: "Security question does not match" });
+    }
+
+    // Verify security answer
+    const answerMatches = await bcrypt.compare(securityAnswer.toLowerCase().trim(), student.securityAnswer);
+    if (!answerMatches) {
+      return res.status(401).json({ message: "Incorrect security answer" });
+    }
+
+    // Hash and update password
+    const hashedPassword = await bcrypt.hash(newPassword, 12);
+    student.password = hashedPassword;
+    await student.save();
+
+    console.log(`✅ Password reset successfully for student: ${studentID}`);
+
+    res.status(200).json({ message: "Password reset successfully" });
+  } catch (err) {
+    console.error("Error resetting password:", err);
     res.status(500).json({ message: "Server error" });
   }
 });

@@ -13,6 +13,8 @@ const studentSchema = new mongoose.Schema({
   section: { type: String, required: true }, 
   yearLevel: { type: String, required: true },
   campus: { type: String, required: true },
+  securityQuestion: { type: String, required: true },
+  securityAnswer: { type: String, required: true },
   settings: {
     notifications: { type: Boolean, default: true },
     emailNotifications: { type: Boolean, default: true },

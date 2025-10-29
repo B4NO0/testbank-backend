@@ -370,6 +370,47 @@ router.get("/test-history/:studentId", async (req, res) => {
   }
 });
 
+// ✅ Get detailed test attempt results
+router.get("/test-attempt/:attemptId", async (req, res) => {
+  try {
+    const { attemptId } = req.params;
+    
+    // Import StudentTestAttempt here to avoid circular imports
+    const StudentTestAttempt = (await import("../models/StudentTestAttempt.js")).default;
+    const Test = (await import("../models/Test.js")).default;
+    
+    const attempt = await StudentTestAttempt.findById(attemptId)
+      .populate('test', 'title subjectCode description')
+      .lean();
+    
+    if (!attempt) {
+      return res.status(404).json({ message: "Test attempt not found" });
+    }
+    
+    // Get the original test questions to show the full question details
+    const test = await Test.findById(attempt.test._id).lean();
+    
+    const detailedResults = {
+      attemptId: attempt._id,
+      testTitle: attempt.test?.title || 'Unknown Test',
+      subject: attempt.test?.subjectCode || 'Unknown Subject',
+      description: attempt.test?.description || '',
+      score: attempt.score,
+      totalPoints: attempt.totalPoints,
+      percentage: attempt.percentage,
+      passed: attempt.passed,
+      submittedAt: attempt.submittedAt,
+      questionResults: attempt.questionResults || [],
+      originalQuestions: test?.questions || []
+    };
+
+    res.json(detailedResults);
+  } catch (err) {
+    console.error("Error fetching test attempt details:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
 // ✅ Get user profile data
 router.get("/profile/:studentId", async (req, res) => {
   try {

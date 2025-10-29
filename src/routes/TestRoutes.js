@@ -351,9 +351,46 @@ function evaluateQuestion(question, studentAnswer) {
     case 'enumeration':
       console.log(`   🔹 Processing ENUMERATION`);
       console.log(`   Student Array: ${JSON.stringify(studentAns)} (isArray: ${Array.isArray(studentAns)})`);
-      console.log(`   Correct Array: ${JSON.stringify(correctAns)} (isArray: ${Array.isArray(correctAns)})`);
+      console.log(`   Question Answers: ${JSON.stringify(question.answers)}`);
+      console.log(`   Correct Answer: ${JSON.stringify(correctAns)} (isArray: ${Array.isArray(correctAns)})`);
       
-      if (Array.isArray(studentAns) && Array.isArray(correctAns)) {
+      // Use question.answers array for correct answers, fallback to correctAnswer
+      const enumerationAnswers = question.answers ? question.answers.map(ans => String(ans).toLowerCase().trim()).filter(ans => ans.length > 0) : [];
+      if (enumerationAnswers.length > 0) {
+        let studentAnswers = [];
+        if (Array.isArray(studentAns)) {
+          // If answers are numeric indexes, map through choices if available
+          if (studentAns.length > 0 && typeof studentAns[0] === 'number' && Array.isArray(question.choices)) {
+            studentAnswers = studentAns
+              .map(idx => question.choices[idx])
+              .filter(ans => typeof ans === 'string')
+              .map(ans => ans.toLowerCase().trim())
+              .filter(ans => ans.length > 0);
+          } else {
+            studentAnswers = studentAns
+              .map(ans => String(ans).toLowerCase().trim())
+              .filter(ans => ans.length > 0);
+          }
+        } else if (studentAns) {
+          studentAnswers = [String(studentAns).toLowerCase().trim()].filter(ans => ans.length > 0);
+        }
+        
+        console.log(`   Correct Answers: ${JSON.stringify(enumerationAnswers)}`);
+        console.log(`   Student Answers: ${JSON.stringify(studentAnswers)}`);
+        
+        // Require set equality (order-insensitive, case-insensitive)
+        const uniqueStudent = [...new Set(studentAnswers)];
+        const requiredCount = enumerationAnswers.length;
+        if (uniqueStudent.length !== requiredCount) {
+          isCorrect = false;
+          console.log(`   ❌ Count mismatch: ${uniqueStudent.length} vs ${requiredCount}`);
+        } else {
+          const allMatch = enumerationAnswers.every(ans => uniqueStudent.includes(ans));
+          isCorrect = allMatch;
+          console.log(`   All Match: ${allMatch}`);
+        }
+      } else if (Array.isArray(studentAns) && Array.isArray(correctAns)) {
+        // Fallback to old logic
         const sortedStudent = [...studentAns].sort();
         const sortedCorrect = [...correctAns].sort();
         console.log(`   Sorted Student: ${JSON.stringify(sortedStudent)}`);
@@ -361,7 +398,7 @@ function evaluateQuestion(question, studentAnswer) {
         isCorrect = JSON.stringify(sortedStudent) === JSON.stringify(sortedCorrect);
         console.log(`   Arrays Match: ${isCorrect}`);
       } else {
-        console.log(`   ❌ One or both are not arrays`);
+        console.log(`   ❌ No valid answers found`);
         isCorrect = false;
       }
       break;
@@ -369,9 +406,18 @@ function evaluateQuestion(question, studentAnswer) {
     case 'identification':
       console.log(`   🔹 Processing IDENTIFICATION`);
       console.log(`   Student String: "${studentAns}" (type: ${typeof studentAns})`);
-      console.log(`   Correct String: "${correctAns}" (type: ${typeof correctAns})`);
+      console.log(`   Question Answers: ${JSON.stringify(question.answers)}`);
+      console.log(`   Correct Answer: "${correctAns}" (type: ${typeof correctAns})`);
       
-      if (typeof studentAns === 'string' && typeof correctAns === 'string') {
+      // Check against answers array first, then fallback to correctAnswer
+      const identificationAnswers = question.answers ? question.answers.map(ans => ans.toLowerCase().trim()) : [];
+      if (identificationAnswers.length > 0) {
+        const studentLower = String(studentAns).toLowerCase().trim();
+        isCorrect = identificationAnswers.includes(studentLower);
+        console.log(`   Student Lower: "${studentLower}"`);
+        console.log(`   Correct Answers: ${JSON.stringify(identificationAnswers)}`);
+        console.log(`   Answer Found: ${isCorrect}`);
+      } else if (typeof studentAns === 'string' && typeof correctAns === 'string') {
         const studentLower = studentAns.toLowerCase().trim();
         const correctLower = correctAns.toLowerCase().trim();
         console.log(`   Student Lower: "${studentLower}"`);
@@ -561,9 +607,9 @@ router.post('/submit-test/:testId', async (req, res) => {
       switch (question.type) {
         case 'identification':
           // Case-insensitive comparison for identification
-          const correctAnswers = question.answers ? question.answers.map(ans => ans.toLowerCase().trim()) : [];
+          const identificationCorrectAnswers = question.answers ? question.answers.map(ans => ans.toLowerCase().trim()) : [];
           const studentAns = (studentAnswer || '').toLowerCase().trim();
-          isCorrect = correctAnswers.includes(studentAns);
+          isCorrect = identificationCorrectAnswers.includes(studentAns);
           break;
 
         case 'multiple':
@@ -579,7 +625,7 @@ router.post('/submit-test/:testId', async (req, res) => {
               
               // Ensure student answer is an array of numbers
               const studentIndexes = Array.isArray(studentAnswer) 
-                ? studentAnswer.map(val => Number(val)).sort()
+                ? [...new Set(studentAnswer.map(val => Number(val)))].sort()
                 : [Number(studentAnswer)].sort();
               
               isCorrect = JSON.stringify(correctIndexes) === JSON.stringify(studentIndexes);
@@ -593,76 +639,60 @@ router.post('/submit-test/:testId', async (req, res) => {
           break;
 
         case 'truefalse':
-          // Case-insensitive comparison for true/false
+          // Normalize both sides to booleans
           if (question.correctAnswer !== undefined && studentAnswer !== undefined) {
-            isCorrect = String(question.correctAnswer).toLowerCase() === String(studentAnswer).toLowerCase();
+            const normalizeBool = (val) => {
+              if (typeof val === 'boolean') return val;
+              if (typeof val === 'number') return val === 1 || val === 0 ? val === 1 : Boolean(val);
+              const s = String(val).toLowerCase().trim();
+              if (s === 'true' || s === 't' || s === '1') return true;
+              if (s === 'false' || s === 'f' || s === '0') return false;
+              return Boolean(s);
+            };
+            isCorrect = normalizeBool(question.correctAnswer) === normalizeBool(studentAnswer);
           }
           break;
 
         case 'enumeration':
           // For enumeration questions, use the 'answers' array for correct answers
           if (Array.isArray(question.answers) && question.answers.length > 0) {
-            const correctAnswers = question.answers
+            const enumerationCorrectAnswers = question.answers
               .map(ans => String(ans).toLowerCase().trim())
               .filter(ans => ans.length > 0);
             
             let studentAnswers = [];
             if (Array.isArray(studentAnswer)) {
-              studentAnswers = studentAnswer
-                .map(ans => String(ans).toLowerCase().trim())
-                .filter(ans => ans.length > 0);
+              // If answers are numeric indexes, map through choices if available
+              if (studentAnswer.length > 0 && typeof studentAnswer[0] === 'number' && Array.isArray(question.choices)) {
+                studentAnswers = studentAnswer
+                  .map(idx => question.choices[idx])
+                  .filter(ans => typeof ans === 'string')
+                  .map(ans => ans.toLowerCase().trim())
+                  .filter(ans => ans.length > 0);
+              } else {
+                studentAnswers = studentAnswer
+                  .map(ans => String(ans).toLowerCase().trim())
+                  .filter(ans => ans.length > 0);
+              }
             } else if (studentAnswer) {
               studentAnswers = [String(studentAnswer).toLowerCase().trim()].filter(ans => ans.length > 0);
             }
             
             console.log('🔍 Enumeration Debug:', {
               question: question.text,
-              correctAnswers,
+              correctAnswers: enumerationCorrectAnswers,
               studentAnswers,
               studentAnswerRaw: studentAnswer
             });
             
-            // Check if student provided the required number of answers
-            const requiredCount = correctAnswers.length;
-            if (studentAnswers.length < requiredCount) {
+            // Require set equality (order-insensitive, case-insensitive)
+            const uniqueStudent = [...new Set(studentAnswers)];
+            const requiredCount = enumerationCorrectAnswers.length;
+            if (uniqueStudent.length !== requiredCount) {
               isCorrect = false;
-              console.log('❌ Student provided too few answers:', studentAnswers.length, 'expected:', requiredCount);
             } else {
-              // Count how many unique correct answers the student provided
-              let correctCount = 0;
-              
-              // Create a copy of correct answers to track which ones have been matched
-              const remainingCorrectAnswers = [...correctAnswers];
-              const matchedStudentAnswers = [];
-              
-              // Check each student answer against correct answers
-              studentAnswers.forEach(studentAns => {
-                // Find if this student answer matches any correct answer
-                const matchIndex = remainingCorrectAnswers.findIndex(correctAns => {
-                  // Exact match or startsWith for partial matches
-                  return studentAns === correctAns || 
-                    correctAns.startsWith(studentAns) ||
-                    studentAns.startsWith(correctAns);
-                });
-                
-                if (matchIndex !== -1) {
-                  correctCount++;
-                  matchedStudentAnswers.push(studentAns);
-                  remainingCorrectAnswers.splice(matchIndex, 1); // Remove matched answer
-                }
-              });
-              
-              // Student needs to match ALL correct answers
-              isCorrect = correctCount === requiredCount && studentAnswers.length === requiredCount;
-              
-              console.log('📊 Enumeration Result:', {
-                correctCount,
-                requiredCount,
-                studentAnswerCount: studentAnswers.length,
-                isCorrect,
-                matchedStudentAnswers,
-                remainingCorrectAnswers
-              });
+              const allMatch = enumerationCorrectAnswers.every(ans => uniqueStudent.includes(ans));
+              isCorrect = allMatch;
             }
           } else {
             isCorrect = false;
@@ -684,10 +714,21 @@ router.post('/submit-test/:testId', async (req, res) => {
       let displayStudentAnswer = studentAnswer;
       let displayCorrectAnswer = question.correctAnswer;
 
-      // Format enumeration answers for display
+      // Format enumeration answers for display (check first as it has special logic)
       if (question.type === 'enumeration') {
         if (Array.isArray(studentAnswer)) {
-          displayStudentAnswer = studentAnswer.filter(ans => ans && ans.trim().length > 0).join(', ');
+          // Map numeric indexes to choice text if available
+          if (studentAnswer.length > 0 && typeof studentAnswer[0] === 'number' && Array.isArray(question.choices)) {
+            displayStudentAnswer = studentAnswer
+              .map(idx => question.choices[idx])
+              .filter(Boolean)
+              .join(', ');
+          } else {
+            displayStudentAnswer = studentAnswer
+              .map(ans => String(ans))
+              .filter(ans => ans && ans.trim().length > 0)
+              .join(', ');
+          }
         } else if (studentAnswer) {
           displayStudentAnswer = String(studentAnswer);
         } else {
@@ -702,9 +743,18 @@ router.post('/submit-test/:testId', async (req, res) => {
         }
       }
 
+      // Handle unanswered questions - mark as "No answer provided" (after enumeration formatting)
+      if (displayStudentAnswer === null || displayStudentAnswer === undefined || 
+          (typeof displayStudentAnswer === 'string' && displayStudentAnswer.trim() === '' && displayStudentAnswer !== 'No answer provided') ||
+          (Array.isArray(displayStudentAnswer) && displayStudentAnswer.length === 0)) {
+        displayStudentAnswer = 'No answer provided';
+      }
+
       // Convert true/false to consistent capitalization for display
       if (question.type === 'truefalse') {
-        displayStudentAnswer = String(studentAnswer).charAt(0).toUpperCase() + String(studentAnswer).slice(1).toLowerCase();
+        if (displayStudentAnswer !== 'No answer provided') {
+          displayStudentAnswer = String(studentAnswer).charAt(0).toUpperCase() + String(studentAnswer).slice(1).toLowerCase();
+        }
         displayCorrectAnswer = String(question.correctAnswer).charAt(0).toUpperCase() + String(question.correctAnswer).slice(1).toLowerCase();
       }
 

@@ -301,10 +301,18 @@ router.get("/stats/:studentId", async (req, res) => {
   try {
     const { studentId } = req.params;
     
-    // Import StudentTestAttempt here to avoid circular imports
+    // Import models here to avoid circular imports
     const StudentTestAttempt = (await import("../models/StudentTestAttempt.js")).default;
+    const Student = (await import("../models/Student.js")).default;
     
-    const attempts = await StudentTestAttempt.find({ student: studentId }).lean();
+    // First find the student by studentID to get their ObjectId
+    const student = await Student.findOne({ studentID: studentId }).lean();
+    if (!student) {
+      return res.status(404).json({ message: "Student not found" });
+    }
+    
+    // Now find test attempts using the student's ObjectId
+    const attempts = await StudentTestAttempt.find({ student: student._id }).lean();
     
     const stats = {
       totalTests: attempts.length,
@@ -329,11 +337,19 @@ router.get("/test-history/:studentId", async (req, res) => {
   try {
     const { studentId } = req.params;
     
-    // Import StudentTestAttempt here to avoid circular imports
+    // Import models here to avoid circular imports
     const StudentTestAttempt = (await import("../models/StudentTestAttempt.js")).default;
     const Test = (await import("../models/Test.js")).default;
+    const Student = (await import("../models/Student.js")).default;
     
-    const attempts = await StudentTestAttempt.find({ student: studentId })
+    // First find the student by studentID to get their ObjectId
+    const student = await Student.findOne({ studentID: studentId }).lean();
+    if (!student) {
+      return res.status(404).json({ message: "Student not found" });
+    }
+    
+    // Now find test attempts using the student's ObjectId
+    const attempts = await StudentTestAttempt.find({ student: student._id })
       .populate('test', 'title subjectCode')
       .sort({ submittedAt: -1 })
       .lean();

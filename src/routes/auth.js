@@ -356,6 +356,7 @@ router.get("/test-history/:studentId", async (req, res) => {
     
     const history = attempts.map(attempt => ({
       id: attempt._id,
+      testId: attempt.test?._id || attempt.test, // Include test ID for frontend calculation
       testTitle: attempt.test?.title || 'Unknown Test',
       subject: attempt.test?.subjectCode || 'Unknown Subject',
       score: attempt.score,

@@ -354,20 +354,40 @@ router.get("/test-history/:studentId", async (req, res) => {
       .sort({ submittedAt: -1 })
       .lean();
     
-    const history = attempts.map(attempt => ({
-      id: attempt._id,
-      testId: attempt.test?._id || attempt.test, // Include test ID for frontend calculation
-      testTitle: attempt.test?.title || 'Unknown Test',
-      subject: attempt.test?.subjectCode || 'Unknown Subject',
-      score: attempt.score,
-      totalPoints: attempt.totalPoints,
-      percentage: attempt.percentage,
-      passed: attempt.passed,
-      submittedAt: attempt.submittedAt,
-      timeSpent: attempt.timeSpent || 'Unknown',
-      questionsAnswered: attempt.questionResults?.length || 0,
-      totalQuestions: attempt.questionResults?.length || 0,
-    }));
+    const history = attempts.map(attempt => {
+      // Calculate time spent if both takenAt and submittedAt are available
+      let timeSpent = 'Unknown';
+      if (attempt.takenAt && attempt.submittedAt) {
+        const taken = new Date(attempt.takenAt);
+        const submitted = new Date(attempt.submittedAt);
+        const diffMs = submitted - taken;
+        const diffMinutes = Math.floor(diffMs / (1000 * 60));
+        
+        if (diffMinutes < 60) {
+          timeSpent = `${diffMinutes} minutes`;
+        } else {
+          const hours = Math.floor(diffMinutes / 60);
+          const minutes = diffMinutes % 60;
+          timeSpent = `${hours}h ${minutes}m`;
+        }
+      }
+      
+      return {
+        id: attempt._id,
+        testId: attempt.test?._id || attempt.test, // Include test ID for frontend calculation
+        testTitle: attempt.test?.title || 'Unknown Test',
+        subject: attempt.test?.subjectCode || 'Unknown Subject',
+        score: attempt.score,
+        totalPoints: attempt.totalPoints,
+        percentage: attempt.percentage,
+        passed: attempt.passed,
+        submittedAt: attempt.submittedAt,
+        takenAt: attempt.takenAt, // Include takenAt for frontend calculation
+        timeSpent: timeSpent,
+        questionsAnswered: attempt.questionResults?.length || 0,
+        totalQuestions: attempt.questionResults?.length || 0,
+      };
+    });
 
     const stats = {
       totalTests: attempts.length,
